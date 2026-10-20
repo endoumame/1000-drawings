@@ -4,6 +4,8 @@ import {
   dayTotal,
   deleteEntry,
   formatDate,
+  isValidEntryCount,
+  milestoneReached,
   summarize,
   updateEntry,
 } from './records';
@@ -75,11 +77,79 @@ describe('summarize', () => {
     expect(s.nextMilestone).toEqual({ target: 100, rest: 100 });
   });
 
-  it('1000体を超えたら残りは0で、節目はなくなる', () => {
-    const s = summarize([entry({ count: 1005 })], '30', '2026-10-20');
-    expect(s.remaining).toBe(0);
-    expect(s.progress).toBe(1);
-    expect(s.nextMilestone).toBeNull();
+  it('記録がなければ達成回数は0', () => {
+    expect(summarize([], '30', '2026-10-20').laps).toBe(0);
+  });
+});
+
+describe('summarize の繰り越し', () => {
+  const at = (...counts: number[]) =>
+    summarize(
+      counts.map((count, i) => entry({ id: String(i), count })),
+      '30',
+      '2026-10-20',
+    );
+
+  it('残り10のところに20を入れると、超えた10を次の1000から引いて990になる', () => {
+    const s = at(250, 250, 250, 240, 20);
+    expect(s.total).toBe(1010);
+    expect(s.remaining).toBe(990);
+    expect(s.laps).toBe(1);
+  });
+
+  it('ちょうど0になったら、すぐ次の1000に戻る', () => {
+    const s = at(250, 250, 250, 250);
+    expect(s.remaining).toBe(1000);
+    expect(s.laps).toBe(1);
+    expect(s.progress).toBe(0);
+    expect(s.nextMilestone).toEqual({ target: 100, rest: 100 });
+  });
+
+  it('進み具合と節目は、今の1000体の中で数える', () => {
+    const s = at(250, 250, 250, 250, 250, 250, 250, 200, 30);
+    expect(s.total).toBe(1980);
+    expect(s.remaining).toBe(20);
+    expect(s.progress).toBeCloseTo(0.98);
+    expect(s.nextMilestone).toEqual({ target: 1000, rest: 20 });
+  });
+
+  it('何周しても合計は全期間で数える', () => {
+    expect(at(250, 250, 250, 250, 250, 250, 250, 250, 5).total).toBe(2005);
+    expect(at(250, 250, 250, 250, 250, 250, 250, 250, 5).laps).toBe(2);
+  });
+});
+
+describe('milestoneReached', () => {
+  it('1000の区切りを越えたら、何回目の達成かを返す', () => {
+    expect(milestoneReached(990, 1010)).toEqual({ kind: 'goal', laps: 1 });
+    expect(milestoneReached(1990, 2000)).toEqual({ kind: 'goal', laps: 2 });
+  });
+
+  it('100の区切りを越えたら、今の1000体の中での節目を返す', () => {
+    expect(milestoneReached(90, 110)).toEqual({ kind: 'step', value: 100 });
+    expect(milestoneReached(1190, 1210)).toEqual({ kind: 'step', value: 200 });
+  });
+
+  it('一度に複数の区切りを越えたら、いちばん大きい区切りを返す', () => {
+    expect(milestoneReached(90, 320)).toEqual({ kind: 'step', value: 300 });
+  });
+
+  it('区切りを越えなければ何も返さない', () => {
+    expect(milestoneReached(110, 150)).toBeNull();
+  });
+
+  it('減ったときは何も返さない', () => {
+    expect(milestoneReached(1010, 990)).toBeNull();
+  });
+});
+
+describe('isValidEntryCount', () => {
+  it('1回の記録は1〜250の整数', () => {
+    expect(isValidEntryCount(1)).toBe(true);
+    expect(isValidEntryCount(250)).toBe(true);
+    expect(isValidEntryCount(251)).toBe(false);
+    expect(isValidEntryCount(0)).toBe(false);
+    expect(isValidEntryCount(2.5)).toBe(false);
   });
 });
 
