@@ -12,8 +12,10 @@ import {
   updateEntry,
 } from './domain/records';
 import { installHint, isIos } from './domain/install';
+import { stage } from './domain/motion';
 import { GOAL, MAX_ENTRY_COUNT, MODES, type Entry, type Mode } from './domain/types';
 import { nowTime, today } from './clock';
+import { playRecordEffect, playRingIn } from './effects';
 import {
   loadEntries,
   loadInstallDismissedAt,
@@ -135,6 +137,8 @@ function renderHome(): string {
   const s = summarize(state.entries, state.mode, today());
   const milestone = `次の節目 ${s.nextMilestone.target}体まで、あと${s.nextMilestone.rest}体`;
   const recent = s.days.slice(0, 3);
+  const st = stage(s.remaining);
+  const percent = (s.progress * 100).toFixed(1);
 
   return `
     <main class="screen">
@@ -147,14 +151,16 @@ function renderHome(): string {
       </header>
       ${renderInstallHint()}
       ${renderTabs()}
-      <section class="card hero" aria-labelledby="remaining-label">
-        <div class="hero-count">
-          <h1 id="remaining-label" class="hero-label">${esc(modeName(state.mode))}　ゴールまで</h1>
-          <p class="hero-number"><span class="num">${s.remaining}</span><span class="unit">体</span></p>
+      <section class="card hero" data-stage="${st.key}" aria-labelledby="remaining-label">
+        <h1 id="remaining-label" class="hero-label">${esc(modeName(state.mode))}　ゴールまで</h1>
+        <div class="ring-wrap" role="progressbar" aria-label="今回の${GOAL}体の進み具合" aria-valuemin="0" aria-valuemax="${GOAL}" aria-valuenow="${GOAL - s.remaining}">
+          <svg class="ring" viewBox="0 0 200 200" aria-hidden="true">
+            <circle class="ring-track" cx="100" cy="100" r="88"></circle>
+            <circle class="ring-fill${s.progress === 0 ? ' is-empty' : ''}" cx="100" cy="100" r="88" pathLength="100" data-percent="${percent}" style="stroke-dashoffset: ${100 - Number(percent)}"></circle>
+          </svg>
+          <p class="hero-number"><span class="num" data-remaining>${s.remaining}</span><span class="unit">体</span></p>
         </div>
-        <div class="progress" role="progressbar" aria-label="描いた数" aria-valuemin="0" aria-valuemax="${GOAL}" aria-valuenow="${GOAL - s.remaining}">
-          <div class="progress-bar" style="width: ${(s.progress * 100).toFixed(1)}%"></div>
-        </div>
+        ${st.label ? `<p class="stage-chip">${esc(st.label)}</p>` : ''}
         <div class="hero-meta">
           <span>今回 <b>${GOAL - s.remaining}</b> / ${GOAL}</span>
           <span>今日 <b>${s.todayTotal}</b> 体</span>
@@ -436,18 +442,30 @@ function save(): void {
   }
 
   const mode = state.mode;
-  const before = summarize(state.entries, mode, today()).total;
+  const beforeSummary = summarize(state.entries, mode, today());
+  const before = beforeSummary.total;
   if (sheet.kind === 'add') {
     commit(addEntry(state.entries, { mode, ...draft }, crypto.randomUUID(), new Date().toISOString()));
   } else if (sheet.id) {
     commit(updateEntry(state.entries, sheet.id, draft));
   }
-  const after = summarize(state.entries, mode, today()).total;
+  const afterSummary = summarize(state.entries, mode, today());
+  const after = afterSummary.total;
   const reached = milestoneReached(before, after);
   const dayAfter = dayTotal(state.entries, mode, draft.date);
 
   state.sheet = null;
   render();
+  if (sheet.kind === 'add') {
+    playRecordEffect(app, {
+      fromRemaining: beforeSummary.remaining,
+      toRemaining: afterSummary.remaining,
+      added: draft.count,
+      goal: GOAL,
+      lapCompleted: reached?.kind === 'goal',
+      stepReached: reached?.kind === 'step',
+    });
+  }
   if (reached?.kind === 'goal') {
     const nth = reached.laps > 1 ? `${reached.laps}回目の` : '';
     toast(`${nth}${GOAL}体達成！ほんまにおつかれさま。次の${GOAL}体スタート`);
@@ -522,12 +540,14 @@ app.addEventListener('click', (ev) => {
       state.mode = el.dataset.mode as Mode;
       saveMode(state.mode);
       render();
+      playRingIn(app);
       break;
     case 'go':
       state.screen = el.dataset.screen as Screen;
       state.pendingImport = null;
       state.settingsMessage = '';
       render();
+      playRingIn(app);
       window.scrollTo(0, 0);
       app.querySelector<HTMLElement>(state.screen === 'home' ? '[data-key="fab"]' : '[data-key="back"]')?.focus();
       break;
@@ -632,5 +652,6 @@ document.addEventListener('visibilitychange', () => {
 });
 
 render();
+playRingIn(app);
 requestPersistence();
 registerSW({ immediate: true });
