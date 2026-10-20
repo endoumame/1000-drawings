@@ -313,6 +313,16 @@ p {
   color: var(--ink);
 }
 
+.laps {
+  font-size: 13px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.laps b {
+  color: var(--ink);
+}
+
 .milestone {
   display: flex;
   align-items: center;
@@ -704,6 +714,19 @@ p {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
+}
+
+.step-btn[aria-disabled='true'],
+.quick-btn[aria-disabled='true'] {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.cap-note {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent);
+  text-align: center;
 }
 
 .quick-btn {

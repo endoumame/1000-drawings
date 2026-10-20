@@ -1,9 +1,18 @@
 import './style.css';
 import { registerSW } from 'virtual:pwa-register';
-import { isValidCount, isValidDate, isValidTime, parseBackup, serializeBackup } from './domain/backup';
-import { addEntry, dayTotal, deleteEntry, formatDate, summarize, updateEntry } from './domain/records';
+import { isValidDate, isValidTime, parseBackup, serializeBackup } from './domain/backup';
+import {
+  addEntry,
+  dayTotal,
+  deleteEntry,
+  formatDate,
+  isValidEntryCount,
+  milestoneReached,
+  summarize,
+  updateEntry,
+} from './domain/records';
 import { installHint, isIos } from './domain/install';
-import { GOAL, MODES, type Entry, type Mode } from './domain/types';
+import { GOAL, MAX_ENTRY_COUNT, MODES, type Entry, type Mode } from './domain/types';
 import { nowTime, today } from './clock';
 import {
   loadEntries,
@@ -124,9 +133,7 @@ function renderTabs(): string {
 
 function renderHome(): string {
   const s = summarize(state.entries, state.mode, today());
-  const milestone = s.nextMilestone
-    ? `次の節目 ${s.nextMilestone.target}体まで、あと${s.nextMilestone.rest}体`
-    : `${GOAL}体達成！ほんまにおつかれさま。`;
+  const milestone = `次の節目 ${s.nextMilestone.target}体まで、あと${s.nextMilestone.rest}体`;
   const recent = s.days.slice(0, 3);
 
   return `
@@ -145,13 +152,14 @@ function renderHome(): string {
           <h1 id="remaining-label" class="hero-label">${esc(modeName(state.mode))}　ゴールまで</h1>
           <p class="hero-number"><span class="num">${s.remaining}</span><span class="unit">体</span></p>
         </div>
-        <div class="progress" role="progressbar" aria-label="描いた数" aria-valuemin="0" aria-valuemax="${GOAL}" aria-valuenow="${Math.min(s.total, GOAL)}">
+        <div class="progress" role="progressbar" aria-label="描いた数" aria-valuemin="0" aria-valuemax="${GOAL}" aria-valuenow="${GOAL - s.remaining}">
           <div class="progress-bar" style="width: ${(s.progress * 100).toFixed(1)}%"></div>
         </div>
         <div class="hero-meta">
-          <span>描いた数 <b>${s.total}</b> / ${GOAL}</span>
+          <span>今回 <b>${GOAL - s.remaining}</b> / ${GOAL}</span>
           <span>今日 <b>${s.todayTotal}</b> 体</span>
         </div>
+        ${s.laps > 0 ? `<p class="laps">${GOAL}体達成 <b>${s.laps}回</b>・これまでの合計 <b>${s.total}</b> 体</p>` : ''}
         <p class="milestone">${svg('flag', 16)}${esc(milestone)}</p>
       </section>
       <section class="recent" aria-labelledby="recent-title">
@@ -312,6 +320,7 @@ function renderSheet(sheet: Sheet): string {
         ? `${formatDate(draft.date)}は ${others}体 → ${others + draft.count}体 にプラスされます`
         : `${formatDate(draft.date)}の記録として新しく追加されます`;
   const title = isEdit ? `${modeName(state.mode)}の記録を編集` : `${modeName(state.mode)}を追加`;
+  const atMax = draft.count >= MAX_ENTRY_COUNT;
 
   return `
     <div class="overlay">
@@ -323,13 +332,14 @@ function renderSheet(sheet: Sheet): string {
           <button class="icon-btn round" data-action="close-sheet" data-key="close-sheet" aria-label="閉じる">${svg('close', 18)}</button>
         </div>
         <div class="stepper">
-          <button class="step-btn" data-action="step" data-step="-1" data-key="dec" aria-label="1減らす">${svg('minus', 20)}</button>
+          <button class="step-btn" data-action="step" data-step="-1" data-key="dec" aria-label="1減らす" aria-disabled="${draft.count <= 1}">${svg('minus', 20)}</button>
           <p class="stepper-value" aria-live="polite"><span class="num">${draft.count}</span><span class="unit">体</span></p>
-          <button class="step-btn" data-action="step" data-step="1" data-key="inc" aria-label="1増やす">${svg('plus', 20)}</button>
+          <button class="step-btn" data-action="step" data-step="1" data-key="inc" aria-label="1増やす" aria-disabled="${atMax}">${svg('plus', 20)}</button>
         </div>
         <div class="quick">
-          ${QUICK_STEPS.map((n) => `<button class="quick-btn" data-action="step" data-step="${n}" data-key="quick-${n}">+${n}</button>`).join('')}
+          ${QUICK_STEPS.map((n) => `<button class="quick-btn" data-action="step" data-step="${n}" data-key="quick-${n}" aria-disabled="${atMax}">+${n}</button>`).join('')}
         </div>
+        ${atMax ? `<p class="cap-note">1回に記録できるのは${MAX_ENTRY_COUNT}体までです</p>` : ''}
         <div class="fields">
           <label class="field">日付
             <input type="date" value="${esc(draft.date)}" max="${today()}" data-field="date" data-key="date" required>
@@ -414,8 +424,8 @@ function save(): void {
   const sheet = state.sheet;
   if (!sheet) return;
   const { draft } = sheet;
-  if (!isValidDate(draft.date) || !isValidTime(draft.time) || !isValidCount(draft.count)) {
-    sheet.error = '日付・時刻・数を確かめてください';
+  if (!isValidDate(draft.date) || !isValidTime(draft.time) || !isValidEntryCount(draft.count)) {
+    sheet.error = `日付・時刻・数（1〜${MAX_ENTRY_COUNT}体）を確かめてください`;
     render();
     return;
   }
@@ -433,13 +443,16 @@ function save(): void {
     commit(updateEntry(state.entries, sheet.id, draft));
   }
   const after = summarize(state.entries, mode, today()).total;
-  const crossed = Math.floor(after / 100) > Math.floor(before / 100) ? Math.min(Math.floor(after / 100) * 100, GOAL) : 0;
+  const reached = milestoneReached(before, after);
   const dayAfter = dayTotal(state.entries, mode, draft.date);
 
   state.sheet = null;
   render();
-  if (crossed) {
-    toast(crossed >= GOAL ? `${GOAL}体達成！ほんまにおつかれさま。` : `${crossed}体達成！この調子。`);
+  if (reached?.kind === 'goal') {
+    const nth = reached.laps > 1 ? `${reached.laps}回目の` : '';
+    toast(`${nth}${GOAL}体達成！ほんまにおつかれさま。次の${GOAL}体スタート`);
+  } else if (reached?.kind === 'step') {
+    toast(`${reached.value}体達成！この調子。`);
   } else if (sheet.kind === 'add') {
     toast(`${mode}秒 +${draft.count}体！ ${formatDate(draft.date)}は合計${dayAfter}体になりました`);
   } else {
@@ -529,7 +542,7 @@ app.addEventListener('click', (ev) => {
       break;
     case 'step':
       if (sheet) {
-        sheet.draft.count = Math.min(9999, Math.max(1, sheet.draft.count + Number(el.dataset.step)));
+        sheet.draft.count = Math.min(MAX_ENTRY_COUNT, Math.max(1, sheet.draft.count + Number(el.dataset.step)));
         sheet.error = '';
         render();
       }
