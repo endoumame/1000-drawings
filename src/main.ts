@@ -2,9 +2,24 @@ import './style.css';
 import { registerSW } from 'virtual:pwa-register';
 import { isValidCount, isValidDate, isValidTime, parseBackup, serializeBackup } from './domain/backup';
 import { addEntry, dayTotal, deleteEntry, formatDate, summarize, updateEntry } from './domain/records';
+import { installHint, isIos } from './domain/install';
 import { GOAL, MODES, type Entry, type Mode } from './domain/types';
 import { nowTime, today } from './clock';
-import { loadEntries, loadMode, requestPersistence, saveEntries, saveMode } from './storage';
+import {
+  loadEntries,
+  loadInstallDismissedAt,
+  loadMode,
+  requestPersistence,
+  saveEntries,
+  saveInstallDismissedAt,
+  saveMode,
+} from './storage';
+
+/** Chromium 系だけが出すイベント。DOM の型定義にはまだない。 */
+interface BeforeInstallPromptEvent extends Event {
+  prompt(): Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
+}
 
 type Screen = 'home' | 'history' | 'settings';
 
@@ -32,6 +47,8 @@ interface State {
   sheet: Sheet | null;
   pendingImport: Entry[] | null;
   settingsMessage: string;
+  installPrompt: BeforeInstallPromptEvent | null;
+  installDismissedAt: number | null;
 }
 
 const QUICK_STEPS = [1, 5, 10, 20];
@@ -45,6 +62,8 @@ const state: State = {
   sheet: null,
   pendingImport: null,
   settingsMessage: '',
+  installPrompt: null,
+  installDismissedAt: loadInstallDismissedAt(),
 };
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
@@ -63,6 +82,8 @@ const icon = {
     '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/>',
   download: '<path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/>',
   upload: '<path d="M12 21V9"/><path d="M7 14l5-5 5 5"/><path d="M5 3h14"/>',
+  share: '<path d="M12 3v12"/><path d="M8 7l4-4 4 4"/><path d="M8 11H6a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-2"/>',
+  addSquare: '<rect x="4" y="4" width="16" height="16" rx="4"/><path d="M12 8v8M8 12h8"/>',
 };
 
 const svg = (name: keyof typeof icon, size = 20) =>
@@ -117,6 +138,7 @@ function renderHome(): string {
           <button class="icon-btn" data-action="go" data-screen="settings" data-key="go-settings" aria-label="設定">${svg('settings', 20)}</button>
         </div>
       </header>
+      ${renderInstallHint()}
       ${renderTabs()}
       <section class="card hero" aria-labelledby="remaining-label">
         <div class="hero-count">
@@ -155,6 +177,47 @@ function renderHome(): string {
         }
       </section>
     </main>`;
+}
+
+function isStandalone(): boolean {
+  return (
+    window.matchMedia('(display-mode: standalone)').matches ||
+    (navigator as Navigator & { standalone?: boolean }).standalone === true
+  );
+}
+
+function renderInstallHint(): string {
+  const hint = installHint({
+    standalone: isStandalone(),
+    ios: isIos(navigator.userAgent, navigator.maxTouchPoints),
+    canPrompt: state.installPrompt !== null,
+    dismissedAt: state.installDismissedAt,
+    now: Date.now(),
+  });
+  if (hint === 'none') return '';
+  const later = `<button class="link-btn install-later" data-action="install-dismiss" data-key="install-dismiss">あとで</button>`;
+  if (hint === 'prompt') {
+    return `
+      <section class="card install" aria-labelledby="install-title">
+        <h2 id="install-title">ホーム画面に追加しよう</h2>
+        <p>アプリとしてすぐ開けて、電波がなくても記録できます。</p>
+        <div class="install-actions">
+          <button class="btn btn-primary" data-action="install" data-key="install">${svg('addSquare', 18)}インストール</button>
+          ${later}
+        </div>
+      </section>`;
+  }
+  return `
+    <section class="card install" aria-labelledby="install-title">
+      <h2 id="install-title">ホーム画面に追加しよう</h2>
+      <p>記録はホーム画面のアプリの中に保存されます。Safari で付けた記録はアプリに引き継がれないので、記録を始める前に追加しておくと安心です。</p>
+      <ol class="install-steps">
+        <li>共有ボタン <span class="install-icon" role="img" aria-label="共有">${svg('share', 16)}</span> をタップ（見つからないときは「…」の中）</li>
+        <li>「ホーム画面に追加」を選ぶ</li>
+        <li>「追加」をタップ</li>
+      </ol>
+      <div class="install-actions">${later}</div>
+    </section>`;
 }
 
 function renderHistory(): string {
@@ -422,6 +485,20 @@ async function readImport(input: HTMLInputElement): Promise<void> {
   app.querySelector<HTMLElement>('[data-key="import-cancel"]')?.focus();
 }
 
+async function promptInstall(): Promise<void> {
+  const prompt = state.installPrompt;
+  if (!prompt) return;
+  // 一度使ったイベントはもう使えないので、結果を待たずに手放す
+  state.installPrompt = null;
+  await prompt.prompt();
+  const { outcome } = await prompt.userChoice;
+  if (outcome === 'dismissed') {
+    state.installDismissedAt = Date.now();
+    saveInstallDismissedAt(state.installDismissedAt);
+  }
+  render();
+}
+
 app.addEventListener('click', (ev) => {
   const el = (ev.target as HTMLElement).closest<HTMLElement>('[data-action]');
   if (!el) return;
@@ -480,6 +557,15 @@ app.addEventListener('click', (ev) => {
     case 'export':
       void exportEntries();
       break;
+    case 'install':
+      void promptInstall();
+      break;
+    case 'install-dismiss':
+      state.installDismissedAt = Date.now();
+      saveInstallDismissedAt(state.installDismissedAt);
+      render();
+      app.querySelector<HTMLElement>('[data-key="tab-30"]')?.focus();
+      break;
     case 'import-cancel':
       state.pendingImport = null;
       state.settingsMessage = '読み込みをやめました';
@@ -508,6 +594,19 @@ app.addEventListener('change', (ev) => {
   sheet.draft[field] = input.value;
   sheet.error = '';
   render();
+});
+
+window.addEventListener('beforeinstallprompt', (ev) => {
+  // ブラウザが自分で出す小さな案内の代わりに、画面内の案内から開く
+  ev.preventDefault();
+  state.installPrompt = ev as BeforeInstallPromptEvent;
+  if (!state.sheet) render();
+});
+
+window.addEventListener('appinstalled', () => {
+  state.installPrompt = null;
+  render();
+  toast('ホーム画面に追加しました');
 });
 
 document.addEventListener('keydown', (ev) => {

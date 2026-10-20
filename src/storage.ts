@@ -3,6 +3,7 @@ import { MODES, type Entry, type Mode } from './domain/types';
 
 const ENTRIES_KEY = '1000-drawings:entries';
 const MODE_KEY = '1000-drawings:mode';
+const INSTALL_DISMISSED_KEY = '1000-drawings:install-dismissed-at';
 
 /** 保存は書き出しと同じ形式にして、読み込みと同じ検証を通す。 */
 export function loadEntries(): Entry[] {
@@ -28,6 +29,15 @@ export function loadMode(): Mode {
 
 export function saveMode(mode: Mode): void {
   write(MODE_KEY, mode);
+}
+
+export function loadInstallDismissedAt(): number | null {
+  const at = Number(read(INSTALL_DISMISSED_KEY));
+  return Number.isFinite(at) && at > 0 ? at : null;
+}
+
+export function saveInstallDismissedAt(at: number): void {
+  write(INSTALL_DISMISSED_KEY, String(at));
 }
 
 /** ブラウザに保存データを勝手に消さないよう頼む（応じるかはブラウザ次第）。 */

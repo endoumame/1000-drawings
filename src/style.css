@@ -164,6 +164,59 @@ p {
   color: var(--muted);
 }
 
+/* ---- インストールの案内 ---- */
+
+.install {
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-color: var(--line-strong);
+}
+
+.install h2 {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.install p,
+.install-steps {
+  font-size: 14px;
+  color: var(--sub);
+}
+
+.install-steps {
+  margin: 0;
+  padding-left: 1.4em;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.install-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: var(--chip);
+  color: var(--accent);
+  vertical-align: middle;
+}
+
+.install-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.install-later {
+  margin-left: auto;
+  padding: 12px;
+  color: var(--muted);
+}
+
 /* ---- タブ ---- */
 
 .tabs {
